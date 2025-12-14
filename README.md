@@ -1,13 +1,29 @@
-# ✨ aythena-ai-photo-enhancer: Интеллектуальное Улучшение Фотографий
+// mobile_app/lib/models/enhancer_model.dart (Дополнение)
 
-Этот репозиторий содержит архитектуру мобильного клиента (Flutter) и бэкенда (Mock) для ИИ-ориентированной платформы улучшения фотографий. Фокус — на использовании глубокого обучения для восстановления, повышения резкости и шумоподавления с сохранением естественности изображения.
+// ... (существующие enum EnhancementType, AIProcessingStatus - остаются прежними) ...
 
-## Архитектура
-* **Frontend:** Flutter/Dart (Riverpod, Image Picker, Real-time Preview, AI-driven UI)
-* **Backend:** Python/Flask (TensorFlow/PyTorch models for Denoising, Super-Resolution, Detail Restoration)
+// Представление отдельного шага в истории редактирования
+class HistoryStep {
+  final String stepId;
+  final String description; // Например, "Применено шумоподавление AI 0.7"
+  final EnhancementConfig? config; // Конфигурация, которая была применена
+  final DateTime timestamp;
 
-## 🔑 Ключевые принципы
-1.  **AI-First Enhancement:** Основные улучшения реализованы через специализированные ИИ-модели, а не традиционные алгоритмы.
-2.  **Adaptive Processing:** ИИ-модель адаптирует параметры улучшения под конкретное изображение (например, интенсивность шумоподавления).
-3.  **Non-Destructive Editing:** Все изменения применяются в виде слоя, сохраняя оригинал.
-4.  **Batch Processing (Implied):**
+  HistoryStep({required this.stepId, required this.description, this.config})
+      : timestamp = DateTime.now();
+}
+
+// Продвинутая модель задачи обработки (Job)
+class ProcessingJob {
+  final String jobId;
+  final String originalAssetId;
+  final List<HistoryStep> appliedSteps; // Ссылка на шаги, которые были применены
+  AIProcessingStatus status;
+  String? resultImageUrl;
+  String? errorMessage;
+  
+  ProcessingJob({
+    required this.jobId, required this.originalAssetId, required this.appliedSteps, 
+    this.status = AIProcessingStatus.pending, this.resultImageUrl, this.errorMessage
+  });
+}
