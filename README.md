@@ -1,4 +1,4 @@
-// mobile_app/lib/providers/active_editor_provider.dart (Обновление)
+// mobile_app/lib/providers/active_editor_provider.dart
 // ... (импорты) ...
 import '../services/local_preview_service.dart';
 import '../services/job_queue_manager.dart';
