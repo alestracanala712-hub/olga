@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RPG Progression</title>
+  <style>
+    body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui;background:#0b0c10;color:#fff}
+    .wrap{max-width:720px;margin:0 auto;padding:16px}
+    .card{background:#151722;border-radius:14px;padding:14px;margin:12px 0}
+    .row{display:flex;gap:12px;flex-wrap:wrap}
+    button{border:0;border-radius:12px;padding:12px 14px;font-weight:600;cursor:pointer}
+    .a{background:#3ddc97;color:#06130e}
+    .b{background:#2b2f44;color:#fff}
+    .c{background:#ffce2f;color:#000}
+    .bar{height:10px;border-radius:999px;background:#2a2d3d;overflow:hidden}
+    .fill{height:100%;background:#3ddc97;width:0%}
+    small{color:#aab}
+    .skill{display:flex;justify-content:space-between;align-items:center;padding:10px;border-radius:12px;background:#10121b;margin:8px 0}
+    .tag{font-size:12px;color:#aab}
+    input{width:100%;padding:10px;border-radius:12px;border:1px solid #2a2d3d;background:#0f1119;color:#fff}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h2>Система прокачки (XP, уровни, навыки)</h2>
+
+    <div class="card">
+      <div id="stats"></div>
+      <div class="bar"><div class="fill" id="xpFill"></div></div>
+      <small id="xpHint"></small>
+
+      <div class="row" style="margin-top:12px">
+        <button class="a" id="btnFight">Бой (+XP)</button>
+        <button class="b" id="btnQuest">Квест (+XP)</button>
+        <button class="c" id="btnBoss">Босс (+XP)</button>
+        <button class="b" id="btnReset">Сброс</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Навыки</h3>
+      <small>Очки навыков выдаются за уровень. Потрать очки, чтобы усилить персонажа.</small>
+      <div id="skills"></div>
+    </div>
+
+    <div class="card">
+      <h3>Баланс и настройка</h3>
+      <label class="tag">Формула опыта на уровень (база)</label>
+      <input id="baseXp" type="number" min="50" step="10" />
+      <small>Чем выше база, тем медленнее прогресс.</small>
+    </div>
+  </div>
+
+<script>
+/*
+  Безопасно: это код для твоей игры/прототипа.
+  Не вмешивается в чужие игры и не обходит защиты.
+*/
+
+const STORAGE_KEY = "rpg_progress_v1";
+
+const defaultState = {
+  level: 1,
+  xp: 0,
+  skillPoints: 0,
+  baseXp: 120,          // базовая сложность
+  stats: { hp: 100, dmg: 10, crit: 0.05, speed: 1.0 },
+  skills: {
+    hpUp: { name: "Выносливость", desc: "+15 HP", cost: 1, taken: 0, max: 10 },
+    dmgUp:{ name: "Сила", desc: "+2 урон", cost: 1, taken: 0, max: 10 },
+    critUp:{ name:"Крит", desc:"+1% шанс крита", cost: 1, taken: 0, max: 10 },
+    spdUp:{ name:"Скорость", desc:"+2% скорость", cost: 1, taken: 0, max: 10 }
+  }
+};
+
+let state = loadState();
+
+function xpToNextLevel(level){
+  // Мягкая кривая: base * (level^1.25) + небольшой рост
+  return Math.floor(state.baseXp * Math.pow(level, 1.25) + level * 12);
+}
+
+function addXP(amount){
+  state.xp += amount;
+
+  // Левел-апы, если накопилось много XP
+  while(state.xp >= xpToNextLevel(state.level)){
+    state.xp -= xpToNextLevel(state.level);
+    state.level += 1;
+    state.skillPoints += 1;
+
+    // Небольшой авто-рост за уровень
+    state.stats.hp += 8;
+    state.stats.dmg += 1;
+  }
+
+  saveAndRender();
+}
+
+function buySkill(key){
+  const s = state.skills[key];
+  if(!s) return;
+  if(state.skillPoints < s.cost) return alert("Недостаточно очков навыков");
+  if(s.taken >= s.max) return alert("Навык уже прокачан максимально");
+
+  state.skillPoints -= s.cost;
+  s.taken += 1;
+
+  // Применяем эффект
+  if(key === "hpUp") state.stats.hp += 15;
+  if(key === "dmgUp") state.stats.dmg += 2;
+  if(key === "critUp") state.stats.crit = +(state.stats.crit + 0.01).toFixed(4);
+  if(key === "spdUp") state.stats.speed = +(state.stats.speed + 0.02).toFixed(4);
+
+  saveAndRender();
+}
+
+function render(){
+  const next = xpToNextLevel(state.level);
+  const pct = Math.max(0, Math.min(100, (state.xp / next) * 100));
+
+  document.getElementById("stats").innerHTML = `
+    <div>Уровень: ${state.level} | Очки навыков: ${state.skillPoints}</div>
+    <div class="tag">HP: ${state.stats.hp} · Урон: ${state.stats.dmg} · Крит: ${(state.stats.crit*100).toFixed(1)}% · Скорость: ${(state.stats.speed).toFixed(2)}</div>
+  `;
+  document.getElementById("xpFill").style.width = pct.toFixed(1) + "%";
+  document.getElementById("xpHint").textContent = `XP: ${state.xp}/${next} до следующего уровня`;
+
+  const skillsEl = document.getElementById("skills");
+  skillsEl.innerHTML = "";
+  Object.entries(state.skills).forEach(([key, s])=>{
+    const div = document.createElement("div");
+    div.className = "skill";
+    div.innerHTML = `
+      <div>
+        <div>${s.name} <span class="tag">(${s.taken}/${s.max})</span></div>
+        <div class="tag">${s.desc}</div>
+      </div>
+      <button class="b">Купить (-${s.cost})</button>
+    `;
+    div.querySelector("button").onclick = ()=>buySkill(key);
+    skillsEl.appendChild(div);
+  });
+
+  const baseXpInput = document.getElementById("baseXp");
+  baseXpInput.value = state.baseXp;
+  baseXpInput.onchange = (e)=>{
+    const v = Number(e.target.value);
+    if(Number.isFinite(v) && v >= 50){
+      state.baseXp = v;
+      saveAndRender();
+    }
+  };
+}
+
+function saveAndRender(){
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  render();
+}
+
+function loadState(){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if(!raw) return structuredClone(defaultState);
+    const parsed = JSON.parse(raw);
+    // простая защита от битых данных
+    return { ...structuredClone(defaultState), ...parsed };
+  }catch{
+    return structuredClone(defaultState);
+  }
+}
+
+function reset(){
+  if(confirm("Сбросить прогресс?")){
+    state = structuredClone(defaultState);
+    saveAndRender();
+  }
+}
+
+// Примеры действий игрока
+document.getElementById("btnFight").onclick = ()=>addXP(randInt(18, 32));
+document.getElementById("btnQuest").onclick = ()=>addXP(randInt(45, 70));
+document.getElementById("btnBoss").onclick = ()=>addXP(randInt(90, 130));
+document.getElementById("btnReset").onclick = reset;
+
+function randInt(a,b){ return Math.floor(Math.random()*(b-a+1))+a; }
+
+render();
+</script>
+</body>
+</html>
