@@ -1,59 +1,130 @@
-// mobile_app/lib/services/job_queue_manager.dart
-import 'dart:async';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../models/enhancer_model.dart';
-import 'image_processing_api.dart';
+// mobile_app/lib/providers/active_editor_provider.dart (Обновление)
+// ... (импорты) ...
+import '../services/local_preview_service.dart';
+import '../services/job_queue_manager.dart';
 
-final jobQueueManagerProvider = Provider((ref) => JobQueueManager(ref.read(imageProcessingApiProvider)));
+// Новое состояние для истории
+class HistoryStack {
+  final List<HistoryStep> stack;
+  final int currentIndex; // Указывает на последний активный шаг
 
-class JobQueueManager {
-  final ImageProcessingApi _api;
-  final List<ProcessingJob> _jobQueue = [];
-  final StreamController<List<ProcessingJob>> _queueStreamController = StreamController.broadcast();
-  Stream<List<ProcessingJob>> get queueStream => _queueStreamController.stream;
-  Timer? _pollingTimer;
-
-  JobQueueManager(this._api) {
-    _startPolling();
+  HistoryStack({this.stack = const [], this.currentIndex = -1});
+  
+  // Добавление нового шага
+  HistoryStack push(HistoryStep step) {
+    // Обрезаем "отмененную" часть истории
+    final newStack = stack.sublist(0, currentIndex + 1);
+    newStack.add(step);
+    return HistoryStack(stack: newStack, currentIndex: newStack.length - 1);
   }
 
-  // Правило JOB-001: Добавление задачи в очередь
-  void submitJob(ProcessingJob job) {
-    _jobQueue.add(job);
-    _queueStreamController.add([..._jobQueue]);
-    print('JOB QUEUE: Добавлена новая задача ${job.jobId}. Текущая очередь: ${_jobQueue.length}');
+  // Отмена (Undo)
+  HistoryStack undo() {
+    if (currentIndex > -1) {
+      return HistoryStack(stack: stack, currentIndex: currentIndex - 1);
+    }
+    return this;
+  }
+  
+  // Повтор (Redo)
+  HistoryStack redo() {
+    if (currentIndex < stack.length - 1) {
+      return HistoryStack(stack: stack, currentIndex: currentIndex + 1);
+    }
+    return this;
+  }
+}
+
+class ActiveEditorState {
+  // ... (предыдущие поля) ...
+  final HistoryStack history; // Новый стек истории
+
+  ActiveEditorState({
+    // ... (предыдущие поля) ...
+    this.history = const HistoryStack(),
+  });
+
+  ActiveEditorState copyWith({
+    // ... (предыдущие поля) ...
+    HistoryStack? history,
+  }) {
+    return ActiveEditorState(
+      // ... (предыдущие поля) ...
+      history: history ?? this.history,
+    );
+  }
+}
+
+// ... (activeEditorProvider и ActiveEditorNotifier - остаются) ...
+
+class ActiveEditorNotifier extends StateNotifier<ActiveEditorState> {
+  // ... (предыдущие поля) ...
+
+  // --- Новая функция: Применение одного шага редактирования ---
+  Future<void> applySingleStep(EnhancementConfig config, {bool isAIStep = true}) async {
+    if (state.originalPhoto == null) return;
     
-    // В реальном приложении: Отправка на бэкенд
-    // _api.submitEnhancementJob(photo, configs).then(...)
+    final step = HistoryStep(
+      stepId: DateTime.now().millisecondsSinceEpoch.toString(),
+      description: config.type.name,
+      config: config,
+    );
+    
+    // 1. Обновляем историю
+    state = state.copyWith(history: state.history.push(step));
+    
+    // 2. Локальный предпросмотр (для немедленного фидбека)
+    final localPreviewPath = await _ref.read(localPreviewServiceProvider).applyLocalAdjustment(
+      File(state.originalPhoto!.path), 
+      config,
+    );
+    state = state.copyWith(currentPreviewPath: localPreviewPath);
+    
+    // 3. Отправляем на бэкенд, если это ИИ-эффект
+    if (isAIStep) {
+        _submitJobFromHistory();
+    }
+  }
+  
+  // --- Отмена и Повтор (Undo/Redo) ---
+  void undo() {
+    state = state.copyWith(history: state.history.undo());
+    // После Undo/Redo необходимо пересчитать финальный вид изображения.
+    // В реальном приложении: перерендеринг или загрузка кешированного состояния
+    _triggerFullRender();
+  }
+  
+  void redo() {
+    state = state.copyWith(history: state.history.redo());
+    _triggerFullRender();
+  }
+  
+  // --- Создание финальной задачи из активной истории ---
+  void _submitJobFromHistory() {
+    if (state.originalPhoto == null) return;
+
+    // Берем только активные шаги из истории
+    final activeSteps = state.history.stack.sublist(0, state.history.currentIndex + 1);
+
+    // Создаем новую задачу с текущим стеком шагов
+    final job = ProcessingJob(
+      jobId: 'JOB-${DateTime.now().millisecondsSinceEpoch}',
+      originalAssetId: state.originalPhoto!.id,
+      appliedSteps: activeSteps,
+    );
+
+    // Отправляем задачу в менеджер очереди
+    _ref.read(jobQueueManagerProvider).submitJob(job);
+    state = state.copyWith(activeJob: job); // Устанавливаем эту задачу как активную
+  }
+  
+  // Имитация: Запуск рендеринга на основе истории
+  void _triggerFullRender() {
+    print('RENDER: Запуск полного рендеринга на основе ${state.history.currentIndex + 1} шагов истории.');
+    // Здесь должна быть логика: 
+    // 1. Проверка, есть ли уже готовый результат (resultImageUrl) для этого стека шагов.
+    // 2. Если нет, отправить _submitJobFromHistory() и ждать результат.
   }
 
-  // Правило JOB-002: Периодический опрос статуса активных задач
-  void _startPolling() {
-    _pollingTimer = Timer.periodic(const Duration(seconds: 5), (timer) async {
-      final activeJobs = _jobQueue.where((j) => j.status == AIProcessingStatus.pending || j.status == AIProcessingStatus.inProgress).toList();
-      
-      for (var job in activeJobs) {
-        try {
-          final updatedJob = await _api.getJobStatus(job.jobId);
-          
-          if (updatedJob.status == AIProcessingStatus.completed || updatedJob.status == AIProcessingStatus.failed) {
-            // Задача завершена, удаляем ее из активного списка
-            job.status = updatedJob.status;
-            job.resultImageUrl = updatedJob.resultImageUrl;
-            
-            print('JOB QUEUE: Задача ${job.jobId} завершена. Статус: ${job.status.name}');
-            // Здесь может быть вызов колбэка для обновления UI
-          }
-        } catch (e) {
-          print('JOB QUEUE ERROR: Не удалось получить статус для ${job.jobId}: $e');
-        }
-      }
-      _queueStreamController.add([..._jobQueue]);
-    });
-  }
-
-  void dispose() {
-    _pollingTimer?.cancel();
-    _queueStreamController.close();
-  }
+  // ... (dispose - остается) ...
 }
